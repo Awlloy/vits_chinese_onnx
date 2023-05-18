@@ -1,4 +1,4 @@
-# Best practice TTS based on BERT and VITS with some Natural Speech Features Of Microsoft
+# Vits_chinese export onnx
 
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/maxmax20160403/vits_chinese)
 <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/PlayVoice/vits_chinese">
@@ -103,7 +103,12 @@ pth
 
 > python ./vits_infer_onnx_stream.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_encode ../onnx_model/vits_bert_encode.onnx --vits_decode ../onnx_model/vits_bert_decode.onnx
 
+> python ./vits_infer_onnx.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_onnx ../onnx_model/vits_bert_student_model.onnx 
 
+> python ./vits_infer_onnx_stream.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_encode ../onnx_model/vits_bert_student_encode.onnx --vits_decode ../onnx_model/vits_bert_student_decode.onnx
+
+### test play audio
+> python ./speak_vits_infer_onnx_stream.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_encode ../onnx_model/vits_bert_student_encode.onnx --vits_decode ../onnx_model/vits_bert_student_decode.onnx
 ### Model compression based on knowledge distillation
 Student model has 53M size and 3× speed of teacher model.
 

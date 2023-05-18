@@ -7,14 +7,72 @@ from text.symbols import symbols
 from text import cleaned_text_to_sequence
 from text import pinyin_dict
 import onnxruntime as ort
-import pyaudio
-
+import argparse
 import pypinyin
 from pypinyin.contrib.neutral_tone import NeutralToneWith5Mixin
 from pypinyin.converter import DefaultConverter
 from pypinyin.core import Pinyin
 from transformers import BertTokenizer
 import time
+import pyaudio
+import threading
+import queue
+import math
+inf_time = time.time()
+audio_mutex = threading.Lock()
+audio_cond = threading.Condition()
+'''
+python ./speak_vits_infer_onnx_stream.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_encode ../onnx_model/vits_bert_student_encode.onnx --vits_decode ../onnx_model/vits_bert_student_decode.onnx
+'''
+# max_p_last=-1
+def conver_wav(wav):
+    max_p = max(0.01, np.max(np.abs(wav)))
+    print("max_p ",max_p)
+    print(32767 / max_p * 0.6)
+    wav *= 32767 / max_p * 0.6
+    return wav.astype(np.int16)
+def save_wav(wav, path, rate):
+    wavfile.write(path, rate, conver_wav(wav))
+
+
+class Audio(threading.Thread):
+    def __init__(self,mutex=None,cond=None):
+        super().__init__()
+        self.mutex=mutex
+        self.cond=cond
+        self.p = pyaudio.PyAudio()
+        # self.audio_queue = queue.Queue(maxsize=100)
+        self.audio_queue = queue.Queue(maxsize=100)
+    def enqueue(self,data):
+        print("en ",len(data))
+        self.audio_queue.put(data)
+    def dequeue(self):
+        data = self.audio_queue.get()
+        return data
+    def run(self):
+        self.stream = self.p.open(format=self.p.get_format_from_width(2),
+                        channels=1,
+                        rate=16000,
+                        output=True,
+        )
+        start = True
+        n=0
+        while True:
+            data = self.dequeue()
+            if data is None or len(data)<=0:
+                continue
+            if start:
+                print("speak time:",time.time()-inf_time,len(data))    
+            print("speak count ",n,len(data))
+            data=conver_wav(data).tobytes()
+            print("max_data",max(data))
+            if start:
+                print("speak time:",time.time()-inf_time,len(data))
+                start=False
+            n+=1
+            self.stream.write(data)
+        self.stream.stop_stream()
+        self.stream.close()
 
 class MyConverter(NeutralToneWith5Mixin, DefaultConverter):
     pass
@@ -117,25 +175,30 @@ class VITS_PinYin:
         return phone_items_str, char_embeds
 
 
-def save_wav(wav, path, rate):
-    wav *= 32767 / max(0.01, np.max(np.abs(wav))) * 0.6
-    wavfile.write(path, rate, wav.astype(np.int16))
 
+parser = argparse.ArgumentParser(description='run test onnx model')
+parser.add_argument('-b','--bert', type=str,default="./bert")
+parser.add_argument('--bert_onnx', type=str,default="./onnx_model/prosody_model.onnx")
+parser.add_argument('--vits_encode', type=str,default="./onnx_model/vits_bert_encode.onnx")
+parser.add_argument('--vits_decode', type=str,default="./onnx_model/vits_bert_decode.onnx")
+parser.add_argument('-t','--thread',type=int, default=11)
+args = parser.parse_args()
 
-
+bert = args.bert
+bert_onnx = args.bert_onnx
 # pinyin
-tts_front = VITS_PinYin("../bert","../onnx_model/prosody_model.onnx_simplify.onnx")
+tts_front = VITS_PinYin(bert,bert_onnx)
 
 # config
-encode_pth = "../onnx_model/vits_bert_encode.onnx_simplify.onnx"
-decode_pth = "../onnx_model/vits_bert_decode.onnx_simplify.onnx"
+encode_pth = args.vits_encode
+decode_pth = args.vits_decode
 opt = ort.SessionOptions()
-opt.intra_op_num_threads = 1  # 设置为 1，强制使用单核推理
-opt.inter_op_num_threads = 1  # 设置为 1，强制
+opt.intra_op_num_threads = args.thread  # 设置为 1，强制使用单核推理
+opt.inter_op_num_threads = args.thread  # 设置为 1，强制
 encode_model = ort.InferenceSession(encode_pth,opt)
 decode_model = ort.InferenceSession(decode_pth,opt)
-
-
+audio_play = Audio()
+audio_play.start()
 
 def decode_stream(z,decode_model):
     print("-----------------------------------------------------------------------------")
@@ -146,12 +209,18 @@ def decode_stream(z,decode_model):
     t = time.time()
     len_z = z.shape[2]
     print('frame size is: ', len_z)
-    if (len_z < 100):
-        print('no nead steam')
+    first_chunk=40 #There is a chance that the test will start with incorrect audio, but it can improve response speed
+    stream_chunk = first_chunk
+    after_chunk = 100
+    after_count = 5 # (first_chunk * after_count)%after_chunk==0
+    
+    
+    if (len_z < after_chunk):
         # one_time_wav = self.dec(z, g=g)[0, 0].data.cpu().float().numpy()
         # one_time_wav = self.decode(z,g=g)[0, 0].data.cpu().float().numpy()
         one_time_wav = decode_model.run(None,{"input":z})[0][0,0]
         print("first speak ",time.time()-t)
+        audio_play.enqueue(one_time_wav)
         return one_time_wav
 
     # can not change these parameters
@@ -159,7 +228,9 @@ def decode_stream(z,decode_model):
     hop_frame = 9
     hop_sample = hop_frame * hop_length
     
-    stream_chunk = 30
+   
+    
+    gen_count = 0
     stream_index = 0
     stream_out_wav = []
 
@@ -177,7 +248,7 @@ def decode_stream(z,decode_model):
         else:
             cut_e = stream_index + stream_chunk + hop_frame
             cut_e_wav = -1 * hop_sample
-        
+        print("cut s ",cut_s,cut_e)
         z_chunk = z[:, :, cut_s:cut_e]
         # o_chunk = self.dec(z_chunk, g=g)[0, 0].data.cpu().float().numpy()
         # o_chunk = self.decode(z_chunk,g=g)[0, 0].data.cpu().float().numpy()
@@ -186,10 +257,13 @@ def decode_stream(z,decode_model):
         o_chunk = o_chunk[cut_s_wav:cut_e_wav]
         if stream_index==0:
             print("first speak ",time.time()-t)
+        audio_play.enqueue(o_chunk)
         stream_out_wav.extend(o_chunk)
         stream_index = stream_index + stream_chunk
+        gen_count+=1
+        if gen_count>=after_count:
+            stream_chunk=after_chunk
         # print(datetime.datetime.now())
-
     if (stream_index < len_z):
         cut_s = stream_index - hop_frame
         cut_s_wav = hop_sample
@@ -198,28 +272,36 @@ def decode_stream(z,decode_model):
         # o_chunk = self.decode(z_chunk,g=g)[0, 0].data.cpu().float().numpy()
         o_chunk = decode_model.run(None,{"input":z_chunk})[0][0,0]
         o_chunk = o_chunk[cut_s_wav:]
+        audio_play.enqueue(o_chunk)
         stream_out_wav.extend(o_chunk)
-        if stream_index==0:
-            print("first speak ",time.time()-t)
-
     stream_out_wav = numpy.asarray(stream_out_wav)
     return stream_out_wav
 os.makedirs("../vits_infer_out/", exist_ok=True)
+
 if __name__ == "__main__":
+    
     n = 0
     fo = open("../vits_infer_item.txt", "r+", encoding='utf-8')
     while (True):
         try:
+            # item = input("plase input sentence:\n")
             item = fo.readline().strip()
         except Exception as e:
             print('nothing of except:', e)
             break
-        if (item == None or item == ""):
-            print("item is None")
-            break
+        if item == "":
+            continue
+        # if (item == None or item == ""):
+        #     print("item is None")
+        #     # break
+        #     time.sleep(1)
+        #     break
         print("start read ")
+        print(item)
         t = time.time()
         n = n + 1
+        inf_time = time.time()
+        
         phonemes, char_embeds = tts_front.chinese_to_phonemes(item)
         input_ids = cleaned_text_to_sequence(phonemes)
         x_tst = np.expand_dims(np.array(input_ids),0)

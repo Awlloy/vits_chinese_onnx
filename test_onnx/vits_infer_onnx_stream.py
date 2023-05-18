@@ -115,9 +115,12 @@ class VITS_PinYin:
         char_embeds = self.expand_for_phone(char_embeds, count_phone)
         return phone_items_str, char_embeds
 
-
-def save_wav(wav, path, rate):
+def conver_wav(wav):
     wav *= 32767 / max(0.01, np.max(np.abs(wav))) * 0.6
+    return wav
+def save_wav(wav, path, rate):
+    # wav *= 32767 / max(0.01, np.max(np.abs(wav))) * 0.6
+    print(wav)
     wavfile.write(path, rate, wav.astype(np.int16))
 
 parser = argparse.ArgumentParser(description='run test onnx model')
@@ -158,6 +161,7 @@ def decode_stream(z,decode_model):
         # one_time_wav = self.dec(z, g=g)[0, 0].data.cpu().float().numpy()
         # one_time_wav = self.decode(z,g=g)[0, 0].data.cpu().float().numpy()
         one_time_wav = decode_model.run(None,{"input":z})[0][0,0]
+        one_time_wav=conver_wav(one_time_wav)
         print("first speak ",time.time()-t)
         return one_time_wav
 
@@ -193,6 +197,7 @@ def decode_stream(z,decode_model):
         o_chunk = o_chunk[cut_s_wav:cut_e_wav]
         if stream_index==0:
             print("first speak ",time.time()-t)
+        o_chunk=conver_wav(o_chunk)
         stream_out_wav.extend(o_chunk)
         stream_index = stream_index + stream_chunk
         # print(datetime.datetime.now())
@@ -205,6 +210,7 @@ def decode_stream(z,decode_model):
         # o_chunk = self.decode(z_chunk,g=g)[0, 0].data.cpu().float().numpy()
         o_chunk = decode_model.run(None,{"input":z_chunk})[0][0,0]
         o_chunk = o_chunk[cut_s_wav:]
+        o_chunk=conver_wav(o_chunk)
         stream_out_wav.extend(o_chunk)
         if stream_index==0:
             print("first speak ",time.time()-t)
@@ -241,8 +247,6 @@ if __name__ == "__main__":
         z,mask=encode_output
         print('start speek ',time.time()-t)
         audio=decode_stream(z,decode_model)
-        # output=
-        # audio = output[0,0].astype(np.float32)
         print("run time ",time.time()-t)
         save_wav(audio, f"../vits_infer_out/bert_vits_stream{n}.wav", 16000)
     fo.close()
