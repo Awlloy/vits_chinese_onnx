@@ -11,6 +11,8 @@ https://user-images.githubusercontent.com/16432329/220678182-4775dec8-9229-4578-
 
 Based on BERT, NaturalSpeech, VITS
 
+Modified to export the onnx model for deployment to other platforms, such as Arm Linux
+
 ### Features
 1, Hidden prosody embedding from BERT，get natural pauses in grammar
 
@@ -80,6 +82,27 @@ put 000001-010000.txt to ./data/000001-010000.txt
 
 
 ![bert_lose](https://user-images.githubusercontent.com/16432329/220883346-c382bea2-1d2f-4a16-b797-2f9e2d2fb639.png)
+### Export Onnx
+
+> python ./export_bert.py -b ./bert/ -o ./onnx_model/prosody_model.onnx -s
+
+> python ./export_vits_onnx.py -m ./model/vits_bert_model.pth -b ./bert/ -c ./configs/bert_vits.json -o ./onnx_model/vits_bert_model.onnx  -s
+pth
+> python ./export_vits_encode.py -m ./model/vits_bert_model.pth -b ./bert/ -c ./configs/bert_vits.json -o ./onnx_model/vits_bert_encode.onnx -d ./onnx_model/vits_bert_decode.onnx -s
+
+or export student model
+
+> python ./export_vits_onnx.py -m ./model/vits_bert_student.pth -b ./bert/ -c ./configs/bert_vits_student.json -o ./onnx_model/vits_bert_student_model.onnx  -s
+pth
+> python ./export_vits_encode.py -m ./model/vits_bert_student.pth -b ./bert/ -c ./configs/bert_vits_student.json -o ./onnx_model/vits_bert_student_encode.onnx -d ./onnx_model/vits_bert_student_decode.onnx -s
+
+### Run .onnx
+> cd test_onnx
+
+> python ./vits_infer_onnx.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_onnx ../onnx_model/vits_bert_model.onnx 
+
+> python ./vits_infer_onnx_stream.py  -b ../bert/  --bert_onnx ../onnx_model/prosody_model.onnx --vits_encode ../onnx_model/vits_bert_encode.onnx --vits_decode ../onnx_model/vits_bert_decode.onnx
+
 
 ### Model compression based on knowledge distillation
 Student model has 53M size and 3× speed of teacher model.
@@ -108,11 +131,16 @@ https://github.com/PlayVoice/vits_chinese/tree/vits_istft
 ### Reference For TTS
 [Microsoft's NaturalSpeech: End-to-End Text to Speech Synthesis with Human-Level Quality](https://arxiv.org/abs/2205.04421)
 
+https://github.com/PlayVoice/vits_chinese
+
 https://github.com/Executedone/Chinese-FastSpeech2 **bert prosody**
 
 https://github.com/wenet-e2e/WeTextProcessing
 
 https://github.com/jaywalnut310/vits
+
+
+
 
 ### Info For Voice Clone
 [Speak, Read and Prompt:High-Fidelity Text-to-Speech with Minimal Supervision](https://arxiv.org/abs/2302.03540)

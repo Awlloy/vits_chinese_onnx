@@ -10,7 +10,7 @@ from scipy.io import wavfile
 from text.symbols import symbols
 from text import cleaned_text_to_sequence
 from vits_pinyin import VITS_PinYin
-
+import time
 parser = argparse.ArgumentParser(description='Inference code for bert vits models')
 parser.add_argument('--config', type=str, required=True)
 parser.add_argument('--model', type=str, required=True)
@@ -49,6 +49,8 @@ if __name__ == "__main__":
     n = 0
     fo = open("vits_infer_item.txt", "r+", encoding='utf-8')
     while (True):
+        print("start read ")
+        t = time.time()
         try:
             item = fo.readline().strip()
         except Exception as e:
@@ -63,7 +65,10 @@ if __name__ == "__main__":
             x_tst = torch.LongTensor(input_ids).unsqueeze(0).to(device)
             x_tst_lengths = torch.LongTensor([len(input_ids)]).to(device)
             x_tst_prosody = torch.FloatTensor(char_embeds).unsqueeze(0).to(device)
-            audio = net_g.infer(x_tst, x_tst_lengths, x_tst_prosody, noise_scale=0.5,
-                                length_scale=1)[0][0, 0].data.cpu().float().numpy()
+            # for i in range(10):
+            output = net_g.infer(x_tst, x_tst_lengths, x_tst_prosody, noise_scale=0.5,
+                                length_scale=1)[0]
+            audio = output[0, 0].data.cpu().float().numpy()
+        print("run time ",time.time()-t)
         save_wav(audio, f"./vits_infer_out/bert_vits_{n}.wav", hps.data.sampling_rate)
     fo.close()

@@ -797,7 +797,6 @@ class SynthesizerEval(nn.Module):
         self.segment_size = segment_size
         self.n_speakers = n_speakers
         self.gin_channels = gin_channels
-
         self.enc_p = TextEncoder(
             n_vocab,
             inter_channels,
@@ -831,36 +830,7 @@ class SynthesizerEval(nn.Module):
         print("Removing weight norm...")
         self.dec.remove_weight_norm()
         self.flow.remove_weight_norm()
-
-    def infer(self, x, x_lengths, bert, sid=None, noise_scale=1, length_scale=1, max_len=None):
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, bert)
-        if self.n_speakers > 0:
-            g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
-        else:
-            g = None
-
-        logw = self.dp(x, x_mask, g=g)
-        w = torch.exp(logw) * x_mask * length_scale
-        w_ceil = torch.ceil(w)
-        y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
-        y_mask = torch.unsqueeze(commons.sequence_mask(y_lengths, None), 1).to(
-            x_mask.dtype
-        )
-        attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
-        attn = commons.generate_path(w_ceil, attn_mask)
-
-        m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(
-            1, 2
-        )  # [b, t', t], [b, t, d] -> [b, d, t']
-        logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(
-            1, 2
-        )  # [b, t', t], [b, t, d] -> [b, d, t']
-
-        z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
-        z = self.flow(z_p, y_mask, g=g, reverse=True)
-        o = self.dec((z * y_mask)[:, :, :max_len], g=g)
-        return o, attn, y_mask, (z, z_p, m_p, logs_p)
-
+        
     def infer_pause(self, x, x_lengths, bert, pause_mask, pause_value, sid=None, noise_scale=1, length_scale=1, max_len=None):
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, bert)
         if self.n_speakers > 0:
@@ -888,20 +858,13 @@ class SynthesizerEval(nn.Module):
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
         z = self.flow(z_p, y_mask, g=g, reverse=True)
+        
         o = self.dec((z * y_mask)[:, :, :max_len], g=g)
         return o, attn, y_mask, (z, z_p, m_p, logs_p)
-    
-    def infer_stream(self, x, x_lengths, bert, sid=None, noise_scale=1, length_scale=1):
-        print("-----------------------------------------------------------------------------")
-        import datetime
-        import numpy
-        print(datetime.datetime.now())
-        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, bert)
-        if self.n_speakers > 0:
-            g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
-        else:
-            g = None
 
+    def encode(self, x, x_lengths, bert, sid=None, noise_scale=1.0, length_scale=1.0):
+        x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, bert)
+        g = None
         logw = self.dp(x, x_mask, g=g)
         w = torch.exp(logw) * x_mask * length_scale
         w_ceil = torch.ceil(w)
@@ -921,11 +884,32 @@ class SynthesizerEval(nn.Module):
 
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p) * noise_scale
         z = self.flow(z_p, y_mask, g=g, reverse=True)
+        # return z, attn, y_mask, (z, z_p, m_p, logs_p),g
+        return z,y_mask,g
+
+    def decode(self, z,g=None):
+        return self.dec(z, g=g)
+    
+    
+    def infer(self, x, x_lengths, bert, sid=None, noise_scale=1.0, length_scale=1.0, max_len=None):
+        z, y_mask,g = self.encode(x, x_lengths, bert, sid=sid, noise_scale=noise_scale, length_scale=length_scale)
+        o = self.decode(z*y_mask,g)[:, :, :max_len]
+        return o,y_mask
+    def infer_stream(self, x, x_lengths, bert, sid=None, noise_scale=1, length_scale=1):
+        print("-----------------------------------------------------------------------------")
+        import datetime
+        import numpy
+        print(datetime.datetime.now())
+        # z, attn, y_mask, (z, z_p, m_p, logs_p),g = self.encode(x, x_lengths, bert, sid=sid, noise_scale=noise_scale, length_scale=length_scale)
+        z, y_mask,g = self.encode(x, x_lengths, bert, sid=sid, noise_scale=noise_scale, length_scale=length_scale)
+
         len_z = z.size()[2]
         print('frame size is: ', len_z)
         if (len_z < 100):
             print('no nead steam')
-            one_time_wav = self.dec(z, g=g)[0, 0].data.cpu().float().numpy()
+            # one_time_wav = self.dec(z, g=g)[0, 0].data.cpu().float().numpy()
+            one_time_wav = self.decode(z,g=g)[0, 0].data.cpu().float().numpy()
+            
             return one_time_wav
 
         # can not change these parameters
@@ -952,7 +936,9 @@ class SynthesizerEval(nn.Module):
                 cut_e_wav = -1 * hop_sample
             
             z_chunk = z[:, :, cut_s:cut_e]
-            o_chunk = self.dec(z_chunk, g=g)[0, 0].data.cpu().float().numpy()
+            # o_chunk = self.dec(z_chunk, g=g)[0, 0].data.cpu().float().numpy()
+            o_chunk = self.decode(z_chunk,g=g)[0, 0].data.cpu().float().numpy()
+            
             o_chunk = o_chunk[cut_s_wav:cut_e_wav]
             stream_out_wav.extend(o_chunk)
             stream_index = stream_index + stream_chunk
@@ -962,7 +948,8 @@ class SynthesizerEval(nn.Module):
             cut_s = stream_index - hop_frame
             cut_s_wav = hop_sample
             z_chunk = z[:, :, cut_s:]
-            o_chunk = self.dec(z_chunk, g=g)[0, 0].data.cpu().float().numpy()
+            # o_chunk = self.dec(z_chunk, g=g)[0, 0].data.cpu().float().numpy()
+            o_chunk = self.decode(z_chunk,g=g)[0, 0].data.cpu().float().numpy()
             o_chunk = o_chunk[cut_s_wav:]
             stream_out_wav.extend(o_chunk)
 

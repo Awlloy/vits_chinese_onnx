@@ -22,7 +22,12 @@ def log(info: str):
 
 def get_spec(hps, filename):
     audio, sampling_rate = load_wav_to_torch(filename)
-    assert sampling_rate == hps.data.sampling_rate, f"{sampling_rate} is not {hps.data.sampling_rate}"
+    if sampling_rate != hps.data.sampling_rate:
+        raise ValueError(
+            "{} {} SR doesn't match target {} SR".format(
+                sampling_rate, hps.data.sampling_rate
+            )
+        )
     audio_norm = audio / hps.data.max_wav_value
     audio_norm = audio_norm.unsqueeze(0)
     spec = spectrogram_torch(
@@ -112,6 +117,7 @@ if __name__ == "__main__":
 
         text = f'[PAD]{message}[PAD]'
         char_embeds = prosody.get_char_embeds(text)
+        print("prepare")
         char_embeds = prosody.expand_for_phone(char_embeds, count_phone)
         char_embeds_path = f"./data/berts/{fileidx}.npy"
         np.save(char_embeds_path, char_embeds, allow_pickle=False)

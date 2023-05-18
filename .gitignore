@@ -12,3 +12,6 @@ monotonic_align/__pycache__
 monotonic_align/build
 monotonic_align/monotonic_align
 bert/prosody_model.pt
+onnx_model/
+model/
+vits_infer_out/
